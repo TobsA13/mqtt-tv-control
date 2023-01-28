@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import argparse
 import os
 import subprocess
@@ -55,26 +56,28 @@ def on_message_command(mqtt_client, data_object, msg):
     else:
         logger.error("Unknown command!")
         return
+    try:
+        if tvConfig.get("method").lower() == "cec":
+            if on:
+                subprocess.check_output('/bin/echo "on 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
+                logger.info("Turned on via CEC")
+                time.sleep(5)
+                subprocess.check_output('/bin/echo "as 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
+                logger.info("Switched input via CEC")
+            else:
+                subprocess.check_output('/bin/echo "standby 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
+                logger.info("Turned off via CEC")
 
-    if tvConfig.get("method").lower() == "cec":
-        if on:
-            subprocess.check_output('/bin/echo "on 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
-            logger.info("Turned on via CEC")
-            time.sleep(5)
-            subprocess.check_output('/bin/echo "as 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
-            logger.info("Switched input via output")
-        else:
-            subprocess.check_output('/bin/echo "standby 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
-            logger.info("Turned off via CEC")
-
-    if tvConfig.get("method").lower() == "output":
-        if on:
-            subprocess.check_output('/usr/bin/sudo /usr/bin/vcgencmd display_power 1', shell=True)
-            logger.info("Turned on via output")
-        else:
-            subprocess.check_output('/usr/bin/sudo /usr/bin/vcgencmd display_power 0', shell=True)
-            logger.info("Turned off via output")
-
+        if tvConfig.get("method").lower() == "output":
+            if on:
+                subprocess.check_output('/usr/bin/sudo /usr/bin/vcgencmd display_power 1', shell=True)
+                logger.info("Turned on via output")
+            else:
+                subprocess.check_output('/usr/bin/sudo /usr/bin/vcgencmd display_power 0', shell=True)
+                logger.info("Turned off via output")
+    except subprocess.CalledProcessError:
+        logger.error("Error running the command")
+        return
 
 mqttc = mqtt.Client(
     client_id=mqttConfig.get("clientId", os.path.basename(sys.argv[0])),
