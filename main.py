@@ -56,7 +56,7 @@ def signalhandler(signum):
 
 
 def on_connect(client, data_object, flags, result):
-    client.subscribe(f"{tvConfig.get('mqttPath')}/data")
+    client.subscribe(f"{tvConfig.get('mqttPath')}/cmd")
     data_object["connected"].set()
 
 
