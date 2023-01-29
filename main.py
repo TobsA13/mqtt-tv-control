@@ -92,6 +92,7 @@ def on_message_command(mqtt_client, data_object, msg):
 
 
 def command_worker(mqtt_client, cmd_queue, stop, tvConfig, logger):
+    old_status = None
     while not stop.is_set():
         try:
             data = cmd_queue.get_nowait()
@@ -115,14 +116,20 @@ def command_worker(mqtt_client, cmd_queue, stop, tvConfig, logger):
                 subprocess.check_output('/usr/bin/sudo /usr/bin/vcgencmd display_power 0', shell=True)
                 logger.info("Turned off via output")
 
-            elif cmd == "cec_status":
-                status = subprocess.check_output('/bin/echo "pow 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1 | grep "power" | cut -d" " -f3', shell=True)
-                status = status.decode("UTF-8").strip()
-                mqtt_client.publish(f"{tvConfig.get('mqttPath', fallback='')}/status", "on" if status == "on" else "off")
-            elif cmd == "output_status":
-                status = subprocess.check_output('/usr/bin/sudo /usr/bin/vcgencmd display_power | cut -d "=" -f 2', shell=True)
-                status = status.decode("UTF-8").strip()
-                mqtt_client.publish(f"{tvConfig.get('mqttPath', fallback='')}/status", "on" if status == "1" else "off")
+            if cmd in ["cec_status", "output_status"]:
+                status = None
+                if cmd == "cec_status":
+                    status = subprocess.check_output('/bin/echo "pow 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1 | grep "power" | cut -d" " -f3', shell=True)
+                    status = status.decode("UTF-8").strip()
+                    status = status == "1"
+                elif cmd == "output_status":
+                    status = subprocess.check_output('/usr/bin/sudo /usr/bin/vcgencmd display_power | cut -d "=" -f 2', shell=True)
+                    status = status.decode("UTF-8").strip()
+                    status = status == "on"
+
+                if old_status != status:
+                    old_status = status
+                    mqtt_client.publish(f"{tvConfig.get('mqttPath', fallback='')}/status", "on" if status else "off")
 
             time.sleep(data[1])
         except queue.Empty:
