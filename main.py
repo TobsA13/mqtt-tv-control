@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 import argparse
 import os
+import platform
+import signal
 import subprocess
 import sys
 import time
+import threading
+import queue
 
 import paho.mqtt.client as mqtt
 import configparser
@@ -27,19 +31,33 @@ if args.verbose:
 config = configparser.ConfigParser()
 logger.debug(f"Reading config file {args.configPath}")
 config.read(args.configPath)
-mqttConfig = config["MQTT"]
-tvConfig = config["TV"]
+try:
+    mqttConfig = config["MQTT"]
+    tvConfig = config["TV"]
+except KeyError:
+    logger.critical("Failed to load config")
+    exit(1)
 
 assert tvConfig.get("mqttPath", fallback="") != ""
 assert tvConfig.get("method", fallback="").lower() in ["cec", "output"]
 
-connected = False
+connected = threading.Event()
+stop = threading.Event()
+cmd_queue = queue.Queue()
+
+
+def signalhandler(signum):
+    logger.info("Signal handler called with signal {}".format(signum))
+
+    stop.set()
+    mqttc.disconnect()
+    logger.warning("exiting...")
+    exit(0)
 
 
 def on_connect(client, data_object, flags, result):
     client.subscribe(f"{tvConfig.get('mqttPath')}/data")
-    global connected
-    connected = True
+    data_object["connected"].set()
 
 
 def on_message(mqtt_client, data_object, msg):
@@ -48,6 +66,8 @@ def on_message(mqtt_client, data_object, msg):
 
 
 def on_message_command(mqtt_client, data_object, msg):
+    logger = data_object["logger"]
+    cmd_queue = data_object["cmd_queue"]
     logger.info(f"Received command: {msg.payload.decode('utf-8')}")
     if msg.payload.decode("utf-8").lower() == "on":
         on = True
@@ -56,34 +76,72 @@ def on_message_command(mqtt_client, data_object, msg):
     else:
         logger.error("Unknown command!")
         return
-    try:
-        if tvConfig.get("method").lower() == "cec":
-            if on:
+
+    if tvConfig.get("method").lower() == "cec":
+        if on:
+            cmd_queue.put(("cec_on", 5))
+            cmd_queue.put(("cec_as", 5))
+        else:
+            cmd_queue.put(("cec_off", 5))
+
+    if tvConfig.get("method").lower() == "output":
+        if on:
+            cmd_queue.put(("output_on", 1))
+        else:
+            cmd_queue.put(("output_on", 1))
+
+
+def command_worker(mqtt_client, cmd_queue, stop, tvConfig, logger):
+    while not stop.is_set():
+        try:
+            data = cmd_queue.get_nowait()
+            cmd = data[0]
+            logger.info(f"Running command: {cmd}")
+
+            if cmd == "cec_on":
                 subprocess.check_output('/bin/echo "on 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
                 logger.info("Turned on via CEC")
-                time.sleep(5)
+            elif cmd == "cec_as":
                 subprocess.check_output('/bin/echo "as 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
                 logger.info("Switched input via CEC")
-            else:
+            elif cmd == "cec_off":
                 subprocess.check_output('/bin/echo "standby 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
                 logger.info("Turned off via CEC")
 
-        if tvConfig.get("method").lower() == "output":
-            if on:
+            elif cmd == "output_on":
                 subprocess.check_output('/usr/bin/sudo /usr/bin/vcgencmd display_power 1', shell=True)
                 logger.info("Turned on via output")
-            else:
+            elif cmd == "output_off":
                 subprocess.check_output('/usr/bin/sudo /usr/bin/vcgencmd display_power 0', shell=True)
                 logger.info("Turned off via output")
-    except subprocess.CalledProcessError:
-        logger.error("Error running the command")
-        return
+
+            elif cmd == "cec_status":
+                status = subprocess.check_output('/bin/echo "pow 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1 | grep "power" | cut -d" " -f3', shell=True)
+                status = status.decode("UTF-8").strip()
+                mqtt_client.publish(f"{tvConfig.get('mqttPath', fallback='')}/status", "on" if status == "on" else "off")
+            elif cmd == "output_status":
+                status = subprocess.check_output('/usr/bin/sudo /usr/bin/vcgencmd display_power | cut -d "=" -f 2', shell=True)
+                status = status.decode("UTF-8").strip()
+                mqtt_client.publish(f"{tvConfig.get('mqttPath', fallback='')}/status", "on" if status == "1" else "off")
+
+            time.sleep(data[1])
+        except queue.Empty:
+            time.sleep(1)
+        except subprocess.CalledProcessError:
+            logger.error("Error running the command")
+            time.sleep(1)
+
 
 mqttc = mqtt.Client(
     client_id=mqttConfig.get("clientId", os.path.basename(sys.argv[0])),
+    userdata={
+        "logger": logger,
+        "cmd_queue": cmd_queue,
+        "connected": connected
+    }
 )
 mqttc.on_connect = on_connect
-mqttc.message_callback_add(f"{tvConfig.get('mqttPath', fallback='')}/data", on_message_command)
+mqttc.message_callback_add(f"{tvConfig.get('mqttPath', fallback='')}/cmd", on_message_command)
 mqttc.on_message = on_message
 
 if mqttConfig.get("user", fallback="") != '':
@@ -95,14 +153,28 @@ if mqttConfig.getboolean("tls", fallback=False):
 mqttc.enable_logger(logger=logger)
 mqttc.connect(mqttConfig.get("broker", fallback="localhost"), mqttConfig.getint("port", 1883))
 
+threading.Thread(target=command_worker, args=[mqttc, cmd_queue, stop, tvConfig, logger]).start()
+
+signal.signal(signal.SIGTERM, signalhandler)
+if platform.system() == 'Linux':
+    signal.signal(signal.SIGHUP, signalhandler)
+
 logger.info("Starting mqtt client...")
-if tvConfig.getboolean("enableHeartbeat", fallback=False):
-    mqttc.loop_start()
-    while not connected:
-        logger.debug("Waiting for connect")
-        time.sleep(1)
-    while True:
-        mqttc.publish(f"{tvConfig.get('mqttPath', fallback='')}/heartbeat", str(int(time.time())))
+mqttc.loop_start()
+while not connected.is_set():
+    logger.info("Waiting for connect")
+    time.sleep(1)
+
+try:
+    while not stop.is_set():
+        if tvConfig.get("method").lower() == "cec":
+            cmd_queue.put(("cec_status", 1))
+        if tvConfig.get("method").lower() == "output":
+            cmd_queue.put(("output_status", 1))
+
+        if tvConfig.getboolean("enableHeartbeat", fallback=False):
+            mqttc.publish(f"{tvConfig.get('mqttPath', fallback='')}/heartbeat", str(int(time.time())))
+
         time.sleep(10)
-else:
-    mqttc.loop_forever()
+except KeyboardInterrupt:
+    signalhandler("KeyboardInterrupt")
