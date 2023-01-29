@@ -1,0 +1,18 @@
+[Unit]
+Description=MQTT TV Control
+Requires=network-online.target
+
+[Service]
+ExecStart=/opt/mqtt-tv-control/venv/bin/python3 /opt/mqtt-tv-control/main.py config.ini
+
+# Disable Python's buffering of STDOUT and STDERR, so that output from the
+# service shows up immediately in systemd's logs
+Environment=PYTHONUNBUFFERED=1
+
+Restart=on-failure
+RestartSec=5
+Type=simple
+WorkingDirectory=/opt/mqtt-tv-control
+
+[Install]
+WantedBy=default.target
