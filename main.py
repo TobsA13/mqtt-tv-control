@@ -167,6 +167,7 @@ while not connected.is_set():
 
 try:
     while not stop.is_set():
+        logger.debug("Adding status request to queue")
         if tvConfig.get("method").lower() == "cec":
             cmd_queue.put(("cec_status", 1))
         if tvConfig.get("method").lower() == "output":
@@ -175,6 +176,6 @@ try:
         if tvConfig.getboolean("enableHeartbeat", fallback=False):
             mqttc.publish(f"{tvConfig.get('mqttPath', fallback='')}/heartbeat", str(int(time.time())))
 
-        time.sleep(10)
+        time.sleep(30)
 except KeyboardInterrupt:
     signalhandler("KeyboardInterrupt")
