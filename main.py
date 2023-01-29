@@ -29,7 +29,7 @@ if args.verbose:
     logger.setLevel(logging.DEBUG)
 
 config = configparser.ConfigParser()
-logger.debug(f"Reading config file {args.configPath}")
+logger.debug("Reading config file %s", args.configPath)
 config.read(args.configPath)
 try:
     mqttConfig = config["MQTT"]
@@ -56,7 +56,7 @@ def signalhandler(signum):
 
 
 def on_connect(client, data_object, flags, result):
-    client.subscribe(f"{tvConfig.get('mqttPath')}/cmd")
+    client.subscribe(tvConfig.get('mqttPath') + "/cmd")
     data_object["connected"].set()
 
 
@@ -68,7 +68,7 @@ def on_message(mqtt_client, data_object, msg):
 def on_message_command(mqtt_client, data_object, msg):
     logger = data_object["logger"]
     cmd_queue = data_object["cmd_queue"]
-    logger.info(f"Received command: {msg.payload.decode('utf-8')}")
+    logger.info("Received command: %s", msg.payload.decode('utf-8'))
     if msg.payload.decode("utf-8").lower() == "on":
         on = True
     elif msg.payload.decode("utf-8").lower() == "off":
@@ -97,7 +97,7 @@ def command_worker(mqtt_client, cmd_queue, stop, tvConfig, logger):
         try:
             data = cmd_queue.get_nowait()
             cmd = data[0]
-            logger.info(f"Running command: {cmd}")
+            logger.info("Running command: %s", cmd)
 
             if cmd == "cec_on":
                 subprocess.check_output('/bin/echo "on 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
@@ -129,7 +129,7 @@ def command_worker(mqtt_client, cmd_queue, stop, tvConfig, logger):
 
                 if old_status != status:
                     old_status = status
-                    mqtt_client.publish(f"{tvConfig.get('mqttPath', fallback='')}/status", "on" if status else "off")
+                    mqtt_client.publish(tvConfig.get('mqttPath', fallback='') + "/status", "on" if status else "off")
 
             time.sleep(data[1])
         except queue.Empty:
@@ -148,7 +148,7 @@ mqttc = mqtt.Client(
     }
 )
 mqttc.on_connect = on_connect
-mqttc.message_callback_add(f"{tvConfig.get('mqttPath', fallback='')}/cmd", on_message_command)
+mqttc.message_callback_add(tvConfig.get('mqttPath', fallback='') + "/cmd", on_message_command)
 mqttc.on_message = on_message
 
 if mqttConfig.get("user", fallback="") != '':
@@ -181,7 +181,7 @@ try:
             cmd_queue.put(("output_status", 1))
 
         if tvConfig.getboolean("enableHeartbeat", fallback=False):
-            mqttc.publish(f"{tvConfig.get('mqttPath', fallback='')}/heartbeat", str(int(time.time())))
+            mqttc.publish(tvConfig.get('mqttPath', fallback='') + "/heartbeat", str(int(time.time())))
 
         time.sleep(30)
 except KeyboardInterrupt:
