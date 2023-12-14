@@ -100,13 +100,13 @@ def command_worker(mqtt_client, cmd_queue, stop, tvConfig, logger):
             logger.info("Running command: %s", cmd)
 
             if cmd == "cec_on":
-                subprocess.check_output('/bin/echo "on 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
+                subprocess.check_output('/usr/bin/sudo /usr/bin/cec-ctl -s --osd-name "Alarmdisplay" --playback --to 0 --image-view-on', shell=True)
                 logger.info("Turned on via CEC")
             elif cmd == "cec_as":
-                subprocess.check_output('/bin/echo "as 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
+                subprocess.check_output('/usr/bin/sudo /usr/bin/cec-ctl -s --osd-name "Alarmdisplay" --playback --to 0 --active-source phys-addr=1.0.0.0', shell=True)
                 logger.info("Switched input via CEC")
             elif cmd == "cec_off":
-                subprocess.check_output('/bin/echo "standby 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1', shell=True)
+                subprocess.check_output('/usr/bin/sudo /usr/bin/cec-ctl -s --osd-name "Alarmdisplay" --playback --to 0 --standby', shell=True)
                 logger.info("Turned off via CEC")
 
             elif cmd == "output_on":
@@ -119,7 +119,7 @@ def command_worker(mqtt_client, cmd_queue, stop, tvConfig, logger):
             if cmd in ["cec_status", "output_status"]:
                 status = None
                 if cmd == "cec_status":
-                    status = subprocess.check_output('/bin/echo "pow 0" | /usr/bin/sudo /usr/bin/cec-client -s -d 1 | grep "power" | cut -d" " -f3', shell=True)
+                    status = subprocess.check_output('/usr/bin/sudo /usr/bin/cec-ctl -s --osd-name "Alarmdisplay" --playback --to 0 --give-device-power-status | grep pwr-state | cut -d" " -f2', shell=True)
                     status = status.decode("UTF-8").strip()
                     status = status == "on"
                 elif cmd == "output_status":
