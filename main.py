@@ -46,7 +46,7 @@ stop = threading.Event()
 cmd_queue = queue.Queue()
 
 
-def signalhandler(signum):
+def signalhandler(signum, frame=None):
     logger.info("Signal handler called with signal {}".format(signum))
 
     stop.set()
